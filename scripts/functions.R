@@ -607,3 +607,54 @@ vis.bins <- function(
   
   
 }
+
+#a function to parse, blastoutput against refseq:
+blastn_parser <- function(table1, table2, identity, coverage) {
+  # table1: .fna.fai file of genes, showing genes length, start and stop
+  # using samtools faidx your_file.fna
+  # table2: .blastout standard blastout of genes.fna against refseq
+  # identity: pident cutoff
+  # coverage: query coverage cutoff
+  
+  gene_length <- read.csv(table1, sep = "\t", header = F)
+  gene_length %>%
+    select(V1, V2) %>%
+    rename(qseqid=V1,
+           gene_length=V2) -> gene_length
+  
+  blastout <- read.csv(table2, sep = "\t", header = F)
+  col_names <- c("qseqid", "sseqid", "pident", "length",
+                 "mismatch", "gapopen", "qstart", 
+                 "qend", "sstart", "send",
+                 "evalue", "bitscore")
+  
+  colnames(blastout) <- col_names
+  blastout %>%
+    left_join(gene_length) %>%
+    # gene length must be over 100bp
+    filter(gene_length >= 100 & pident >= identity) %>%
+    group_by(qseqid, sseqid, gene_length) %>%
+    summarise(total_length= sum(length),
+              hit_count=n()) %>%
+    ungroup() %>%
+    mutate(query_coverage= total_length/gene_length*100) %>%
+    # over 95% of gene of interest must be covered
+    filter(query_coverage >= coverage)
+      
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

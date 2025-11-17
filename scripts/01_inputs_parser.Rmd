@@ -11,6 +11,7 @@ for functions and analyses
 
 library(tidyverse)
 library(ape) # for reading/writing tree files
+library(tidytext)
 #load functions
 source('./functions.R')
 
@@ -779,7 +780,6 @@ header <- c(
   "FIELD_COLORS\t#ff0000",
   "DATA"
 )
-
 # Select and rename columns
 tip_labels <- BinQT %>%
   select(BinLab, label) %>%
@@ -954,8 +954,16 @@ common_genes %>%
   left_join(common_genes_overlap) -> common_genes
 
 common_genes %>%
+  select(gene_id, Donor, ptype) %>% distinct() %>%
+  write.table("../data/clean/commonly_colonized_genes_withRef.txt", 
+          sep = "\t", row.names = F, col.names = T, quote = F)
+
+common_genes %>%
   select(feature) %>% distinct() %>%
-  write.table("../data/clean/commonly_colonized_genes.txt", 
+  mutate(gene_id=gsub(".*__", "", feature)) -> comgenes
+
+comgenes %>% select(gene_id) %>%  
+write.table("../data/clean/commonly_colonized_genes.txt", 
             sep = "\t", row.names = F, col.names = F, quote = F)
 
 ```
@@ -971,8 +979,6 @@ common_genes %>%
   theme_bw() +
   ylab("commonly colonized genes")
   
-
-
 ```
 
 
@@ -986,5 +992,72 @@ ggplot(common_genes, aes(gene_id, Group, fill=Donor)) +
         strip.text.x = element_text(angle = 90))
 
 ```
+
+## common colonized genes against RefSeq
+
+```{r}
+
+#common genes in each donor:
+read.table("../data/clean/commonly_colonized_genes_withRef.txt", 
+                        sep = "\t", header  = T) %>%
+  rename(qseqid = "gene_id") -> geneMap
+
+###############################################################################
+refseq_name <- read.csv("../Results/Assembly/references_headers.txt",
+                        sep = "\t", header = F)
+refseq_name %>%
+  mutate(sseqid= gsub(" .*", "", V1)) %>%
+  mutate(sseqid= gsub(">", "", sseqid)) %>%
+  mutate(filename=gsub(".*__", "", V1)) %>%
+  rename(refseq_header=V1)-> refseq_name
+gtdb_refseq <- read.csv("../Results/Assembly/gtdb.bac120.summary.tsv",
+                        sep = "\t") 
+gtdb_refseq %>%
+  select(user_genome, classification) %>%
+  separate(classification, c("Kingdom", "Phylum", "Class",
+                                   "Order", "Family", "Genus",
+                                   "Species"), ";.__") %>%
+  mutate(filename= paste(user_genome, ".fna.gz", sep = "")) %>%
+  left_join(refseq_name) -> refseq_taxonomy
+
+###############################################################################
+blastn_parser("../Results/Assembly/commonly_colonized_genes.fasta.fai",
+              "../Results/Assembly/commonly_colonized_genes_inRefSeq.blastout",
+              identity = 90, coverage = 90) %>%
+  left_join(geneMap) %>%
+  group_by(sseqid, Donor, ptype) %>%
+  summarise(genes=n()) %>%
+  left_join(refseq_taxonomy) %>%
+  ungroup() %>%
+  group_by(Species) %>%
+  #mutate(spID= paste(Species, row_number(), sep = "_")) %>%
+  mutate(spID= paste(Species, gsub("_ASM.*", "", user_genome),
+                     sep = "_")) -> refseq_inGenes
+# genomes with >= 5 genes:
+refseq_inGenes %>%
+  filter(genes >= 15) %>%
+  filter(ptype %in% c("AB", "BA")) %>%
+ggplot(aes(genes, reorder_within(spID, genes, Donor), fill=Donor)) +
+  geom_bar(stat = "identity") +
+  facet_grid(~ptype, space = "free", scales = "free") +
+  #scale_x_log10() +
+  scale_fill_manual(values = c("DonA" = "#7b3294",
+                                 "DonB" = "#008837")) +
+  scale_y_reordered() +
+  theme_bw() +
+  theme(strip.text.y = element_text(angle = 0),
+        legend.position = "bottom",
+        axis.title.y = element_blank())
+
+```
+
+
+
+
+
+
+
+
+
 
 
