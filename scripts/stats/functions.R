@@ -1,3 +1,31 @@
+loop_mods = function(dat){
+  pr_df = data.frame(resid = NA,
+                     fitted = NA, 
+                     feature = NA)
+  mod_lst = list()
+  for (feat in unique(dat$feature)){
+    mod = run_mod(filter(dat, feature == feat))
+    pr_df = rbind(pr_df,
+                  data.frame(resid = resid(mod),
+                             fitted = fitted(mod),
+                             feature = feat))
+    mod_lst[[feat]] = mod
+  }
+  pr_df = pr_df[-1,]
+  return(list(mods = mod_lst, prdf = pr_df))
+}
+
+
+run_mod = function(dat, re = TRUE){
+  form = 'count/size ~ order * Donor'
+  if (re){
+    form = paste(form, '+ (1 | Cage) + (1 | Sample)')
+  }
+  mod = glmmTMB(formula(form),
+                family = 'gaussian',
+                data = dat)
+}
+
 sum_bins = function(df){
   breaks = n_distinct(df$bins)
   labs = paste('bin', 1:breaks, sep = '')
