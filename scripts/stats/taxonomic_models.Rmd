@@ -1,0 +1,424 @@
+Family vs Phylum Models
+=======================
+
+## Setup
+
+### Load Packages
+
+```{r}
+library(tidyverse)
+library(glmmTMB)
+library(emmeans)
+library(AfterSl1p)
+source('scripts/stats/functions.R')
+theme_set(theme_bw())
+```
+
+## Read in data
+
+### Sample data
+
+```{r}
+# sample data
+dat = read.delim('data/clean/coloniz_model.txt')
+dat_map = (dat
+           %>% select(Sample, Group, Category, Cage)
+           %>% unique())
+rm(dat)
+```
+
+### Bins/MAGs
+
+```{r}
+bin_tax = read.delim('data/clean/binQT.txt')
+
+bin_cov = read.delim('data/clean/binCover.txt')
+bin_cov = filter(bin_cov, Sample %in% dat_map$Sample)
+all_mags = read.delim('data/clean/MAGids.txt', header = FALSE)
+colnames(all_mags) = 'BinLab'
+mag_cov = read.delim('data/clean/MAGCover.txt')
+mag_cov = filter(mag_cov, Sample %in% dat_map$Sample)
+```
+
+### Species Taxonomy
+
+```{r}
+spc_dat = read.delim('data/clean/speciesAbund.txt')
+spc_dat = (spc_dat
+           %>% mutate(feature = gsub('[a-z]__','',feature))
+           %>% separate_wider_delim(feature, '|', 
+                                    names = c('Kingdom', 'Phylum','Class', 
+                                              'Order', 'Family', 'Genus', 
+                                              'Species', 'Strain'), 
+                                    too_few = 'align_start')
+           %>% mutate(Sample = case_when(Sample == 'Wild116' ~ 'DonorB',
+                                         Sample == 'X608' ~ 'DonorA',
+                                         TRUE ~ Sample)))
+spc_tax = (spc_dat
+           %>% select(Kingdom:Strain)
+           %>% unique())
+```
+
+## Wrangle Taxonomy
+
+### Bins
+
+```{r}
+### Check if families are unique
+chk_fams = (bin_tax
+            %>% select(Phylum:Family)
+            %>% unique())
+dim(chk_fams)
+n_distinct(chk_fams$Family)
+
+### They are. I don't need to carry all the taxon info.
+bin_tax = select(bin_tax, BinLab, Family, Phylum)
+bin_fam_phy = (bin_tax
+           %>% select(Family, Phylum)
+           %>% unique())
+
+### filter down to phyla that contain more than one family. Otherwise it's just
+### the same data twice.
+
+bin_fam_phy = (bin_fam_phy
+               %>% count(Phylum)
+               %>% filter(n > 1)
+               %>% left_join(bin_fam_phy))
+```
+
+### Species
+
+```{r}
+### Check if families are unique
+chk_fams = (spc_tax
+            %>% select(Phylum, Family)
+            %>% unique())
+dim(chk_fams)
+n_distinct(chk_fams$Family)
+```
+
+There are two sets of families that have the same names but different phyla. Let's see:
+
+```{r}
+chk_fams %>% count(Family) %>% filter(n > 1) %>% left_join(chk_fams)
+```
+
+I don't really understand how something can have a family assignment but lack a
+phylum assignment, but what I'm going to do is filter out everything that lacks
+a phylum or family assignment.
+
+```{r}
+spc_tax = (spc_tax
+           %>% filter(!grepl('unclassified', Phylum),
+                      !grepl('unclassified', Family)))
+```
+
+## Create database counts and find common families and phyla
+
+### Bins
+
+Find families and phyla that are present in both donors:
+
+```{r}
+head(bin_tax)
+bin_don = (bin_tax
+       %>% mutate(Donor = sub('Don', 'Donor', (substr(BinLab, 1, 4)))))
+
+bin_fam_both = find_don_shared(bin_don, 'Family')
+bin_phy_both = find_don_shared(bin_don, 'Phylum')
+```
+
+Make sure the phyla have at least 2 families:
+
+```{r}
+bin_fam_both = bin_fam_both[bin_fam_both %in% bin_fam_phy$Family]
+bin_phy_both = bin_phy_both[bin_phy_both %in% bin_fam_phy$Phylum]
+```
+
+Get db sizes for the two donors
+
+```{r}
+bin_fam_size = (bin_don
+             %>% filter(Family %in% bin_fam_both)
+             %>% count(Donor, Family, name = 'size'))
+bin_phy_size = (bin_don
+             %>% filter(Phylum %in% bin_phy_both)
+             %>% count(Donor, Phylum, name = 'size'))
+```
+
+### MAGs
+
+```{r}
+mag_tax = (bin_tax
+           %>% filter(BinLab %in% all_mags$BinLab))
+mag_don = (bin_don
+           %>% filter(BinLab %in% all_mags$BinLab))
+
+mag_fam_both = find_don_shared(mag_don, 'Family')
+mag_fam_both = mag_fam_both[mag_fam_both %in% bin_fam_phy$Family]
+mag_phy_both = find_don_shared(mag_don, 'Phylum')
+mag_phy_both = mag_phy_both[mag_phy_both %in% bin_fam_phy$Phylum]
+mag_fam_size = (mag_don
+             %>% filter(Family %in% mag_fam_both)
+             %>% count(Donor, Family, name = 'size'))
+mag_phy_size = (mag_don
+             %>% filter(Phylum %in% mag_phy_both)
+             %>% count(Donor, Phylum, name = 'size'))
+```
+
+### Species
+
+Start by splitting the data into donor and recipient and only keep those that
+meet the cutoff
+
+```{r}
+head(spc_dat)
+spc_don = (spc_dat
+           %>% filter(startsWith(Sample, 'Don'),
+                      coverage > 0.1)
+           %>% rename(Donor = Sample))
+spc_rec = (spc_dat
+           %>% filter(!startsWith(Sample, 'Don'),
+                      coverage > 0.1)
+           %>% filter(Sample %in% dat_map$Sample))
+```
+
+Identify strains that are common to the two donors for elimination
+
+```{r}
+spc_don = (spc_don
+           %>% select(-Donor, Strain)
+           %>% unique()
+           %>% count(Strain)
+           %>% filter(n == 1)
+           %>% left_join(spc_don)
+           %>% select(Strain, Family, Phylum, Donor))
+```
+
+Remove unclassified 
+
+```{r}
+spc_don = (spc_don
+           %>% filter(!grepl('unclassified', Phylum),
+                      !grepl('unclassified', Family)))
+```
+
+
+Limit ourselves to phyla with more than one family
+
+```{r}
+spc_fam_phy = (spc_don
+               %>% select(Family, Phylum)
+               %>% unique())
+spc_fam_phy = (spc_fam_phy
+               %>% count(Phylum)
+               %>% filter(n > 1)
+               %>% left_join(spc_fam_phy))
+```
+
+Get the families and phyla that are common to the two donors
+
+```{r}
+spc_fam_both = find_don_shared(spc_don, 'Family')
+spc_phy_both = find_don_shared(spc_don, 'Phylum')
+spc_fam_both = spc_fam_both[spc_fam_both %in% spc_fam_phy$Family]
+spc_phy_both = spc_phy_both[spc_phy_both %in% spc_fam_phy$Phylum]
+```
+
+
+Get database sizes for species at the family and phylum levels
+
+```{r}
+spc_fam_size = (spc_don
+             %>% filter(Family %in% spc_fam_both)
+             %>% count(Donor, Family, name = 'size'))
+spc_phy_size = (spc_don
+             %>% filter(Phylum %in% spc_phy_both)
+             %>% count(Donor, Phylum, name = 'size'))
+```
+
+## Include source donor in all the coverage/recipient data frames
+
+### Bins
+
+```{r}
+bin_cov = (bin_cov
+           %>% mutate(Donor = gsub('Don', 'Donor', substr(feature, 1, 4))))
+mag_cov = (mag_cov
+           %>% mutate(Donor = gsub('Don', 'Donor', substr(feature, 1, 4))))
+spc_rec = (spc_rec
+           %>% left_join((spc_don
+                          %>% select(Strain, Donor)),
+                         by = 'Strain')
+           %>% filter(!is.na(Donor)))
+```
+
+
+## Get Counts
+
+### Bins
+
+```{r}
+bin_cov = (bin_cov
+           %>% filter(coverage > 75)
+           %>% left_join(bin_tax, by = c('feature' = 'BinLab'))
+           %>% rename(BinLab = feature))
+
+fbin_count = get_counts(bin_cov, bin_fam_both, 'Family', 'Bin', bin_fam_size)
+pbin_count = get_counts(bin_cov, bin_phy_both, 'Phylum', 'Bin', bin_phy_size)
+```
+
+### MAGs
+
+```{r}
+mag_cov = (mag_cov
+           %>% filter(coverage > 75)
+           %>% left_join(bin_tax, by = c('feature' = 'BinLab'))
+           %>% rename(BinLab = feature))
+fmag_count = get_counts(mag_cov, mag_fam_both, 'Family', 'MAG', mag_fam_size)
+pmag_count = get_counts(mag_cov, mag_phy_both, 'Phylum', 'MAG', mag_phy_size)
+```
+
+### Species
+
+```{r}
+spc_rec = (spc_rec
+           %>% filter(coverage > 0.1)
+           %>% select(Sample, Family, Phylum, Strain, Donor))
+fspc_count = get_counts(spc_rec, spc_fam_both, 'Family', 'Species', spc_fam_size)
+pspc_count = get_counts(spc_rec, spc_phy_both, 'Phylum', 'Species', spc_phy_size)
+```
+
+## Merge everything into a single data frame
+
+```{r}
+all_counts = rbind(fbin_count, pbin_count,
+                   fmag_count, pmag_count,
+                   fspc_count, pspc_count)
+
+all_counts = (all_counts
+              %>% left_join(dat_map, by = 'Sample')
+             %>% filter(!is.na(Group))
+             %>% mutate(order = case_when(Group == 'ABAB' ~ 'mixed',
+                                          (Group == 'AB' & Donor == 'DonorA') |
+                                            (Group == 'BA' & Donor == 'DonorB') ~
+                                            'first',
+                                          TRUE ~ 'second'),
+                        order = factor(order,
+                                       levels = c('mixed', 'second', 'first'))))
+```
+
+## Modeling
+
+### Run the models on everything
+
+Run each feature level through the models
+
+```{r}
+labs = expand.grid(c('f','p'), c('bin','mag', 'spc'))
+labs = paste(labs[,1], labs[,2], sep = '')
+sets = expand.grid(TaxLev = c('Family', 'Phylum'),
+                   FeatureType = c('Bin', 'MAG', 'Species'))
+sets$labs = labs
+
+all_out = list()
+for (i in 1:nrow(sets)){
+  all_out[[sets$labs[i]]] = use_loop_mods(all_counts,ft = sets$FeatureType[i],
+                                             tl = sets$TaxLev[i])
+}
+```
+
+### Diagnostics
+
+```{r}
+prdfl = lapply(all_out, function(x) x[['prdf']])
+all_prdf = (do.call(rbind, prdfl)
+            %>% mutate(TaxLev = factor(TaxLev, levels = c('Phylum', 'Family')),
+                       feature = factor(feature),
+                       feature = order_levs(feature, TaxLev)))
+ggplot(all_prdf, aes(fitted, resid)) +
+  geom_point(alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_smooth(method = 'lm') +
+  facet_wrap(~feature, scales = 'free')
+ggplot(all_prdf, aes(fitted, abs(resid))) +
+  geom_point(alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_smooth(method = 'lm') +
+  facet_wrap(~feature, scales = 'free')
+ggplot(all_prdf, aes(sample = resid)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_wrap(~feature, scales = 'free')
+```
+
+Some of the phylum models are okay, but all of the family models are terrible. I
+can't really say that I would trust any of these outputs.
+
+### Results
+
+Get the contrast estimates and p-values
+
+```{r}
+all_mods = lapply(all_out, function(x) x[['mods']])
+all_contr_pv = lapply(all_out, function(x) get_contr_pv(x[['mods']]))
+for (lab in names(all_contr_pv)){
+  all_contr_pv[[lab]] = mutate(all_contr_pv[[lab]],
+                               FeatureType = sets$FeatureType[which(sets$labs == lab)],
+                               TaxLev = sets$TaxLev[which(sets$labs == lab)])
+}
+```
+
+Make sure the full family and phylum information is present for all the tests
+
+```{r}
+all_fam_phy = rbind(mutate(bin_fam_phy, FeatureType = 'Bin'),
+                    mutate(bin_fam_phy, FeatureType = 'MAG'),
+                    mutate(spc_fam_phy, FeatureType = 'Species'))
+all_contr_df = do.call(rbind, all_contr_pv)
+
+all_contr_df = (all_contr_df
+                %>% rename(Family = feature)
+                %>% left_join(all_fam_phy, by = c('FeatureType', 'Family'))
+                %>% mutate(Phylum = case_when(TaxLev == 'Phylum' ~ Family,
+                                              TRUE ~ Phylum),
+                           Family = case_when(TaxLev == 'Phylum' ~ 'Full Phylum',
+                                              TRUE ~ Family),
+                           Family = relevel(factor(Family), 'Full Phylum'))
+                %>% select(-n))
+```
+
+#### Visualization
+
+There are a few different ways to visualize this. The first is like we did with the features:
+
+```{r}
+ggplot(all_contr_df, aes(Family, estimate, colour = within_don)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  geom_linerange(aes(ymin = estimate - (SE*1.96),
+                 ymax = estimate + (SE*1.96)),
+                 position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  coord_flip() +
+  scale_x_discrete(limits = rev) +
+  facet_grid(Phylum ~ FeatureType + numerator, scales = 'free') +
+  scale_colour_manual(values = c("DonorA" = "#7b3294",
+                                  "DonorB" = "#008837"),
+                     name = 'Donor') 
+  
+```
+
+A second option is to look at all the families vs all the phyla
+
+```{r}
+ggplot(all_contr_df, aes(estimate, colour = TaxLev)) +
+  geom_density() +
+  facet_grid(numerator ~ FeatureType) +
+  scale_colour_brewer(palette = 'Set1')
+```
+
+If the effect is bigger within family than within phylum, we expect the phylum
+curves to be narrower than the family curves. I guess we can sort of see that if
+we squint, but it's very messy. The problem really is that there aren't enough
+families that are present in both donors to make for a big enough dataset to
+test this.
