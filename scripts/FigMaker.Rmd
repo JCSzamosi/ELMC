@@ -119,7 +119,7 @@ BinQT %>% mutate(feature = paste0(BinLab)) %>%
   mutate(temp = gsub("_.*", "", feature)) %>%
   mutate(label = paste(label, gsub("Don", "", temp), sep = "")) %>%
   select(feature, label)-> BinQT
-#
+# 
 CompFeature(feature_c = "../data/clean/binCover.txt",
            cutoff_pres = 75,
            method = "Assembly",
@@ -129,7 +129,16 @@ fig <- CompFig_pheatmap(table = table,
                  flabel = BinQT)
 ggsave("../figs/Bin_pheatmap.pdf", plot = fig, width = 9, height = 11)
 
+CompFig(feature_c = "../data/clean/binCover.txt",
+        cutoff_pres = 75,
+        method = "Assembly",
+        mapfile = "../data/clean/mapfile.txt",
+        flabel = BinQT)
+ggsave("../figs/Bin_heatmap.png", width = 18, height = 25, units = "cm")
+
+
 ```
+
 
 
 ```{r}
@@ -149,7 +158,56 @@ fig <- CompFig_pheatmap(table = table,
                  flabel = BinQT)
 ggsave("../figs/MAG_pheatmap.pdf", plot = fig, width = 9, height = 9)
 
+CompFig(feature_c = "../data/clean/MAGCover.txt",
+        cutoff_pres = 75,
+        method = "Assembly",
+        mapfile = "../data/clean/mapfile.txt",
+        flabel = BinQT)
+ggsave("../figs/MAG_heatmap.png", width = 18, height = 20, units = "cm")
+
 ```
+
+```{r}
+
+tree <- read.tree("../data/clean/MAGs_DonA_and_B.tree")
+ids  <- unique(tree$tip.label)
+
+table <- read.csv("../data/clean/MAGCover.txt", sep = "\t") %>%
+  filter(feature %in% ids)
+
+# Pivot the table to wide format
+table_wide <- table %>%
+  pivot_wider(names_from = Sample, values_from = coverage) %>%
+  column_to_rownames("feature")
+
+# 1. Plot the basic tree
+p <- ggtree(tree) + 
+  geom_tiplab(size = 2, align = TRUE) #+ 
+  #hexpand(.1, side = 1) # Add space for labels
+
+# 2. Add the heatmap
+# 'data' must be a data frame or matrix with row names matching tree tip labels
+ph <- gheatmap(p, table_wide, 
+               offset = 0.5, 
+               width = 2, 
+               colnames_angle = 90, 
+               colnames_offset_y = -0.1,
+               font.size = 2) +
+  # Custom gradient: Low to High
+  scale_fill_gradient(low = "#f7f7f7", 
+                      high = "#0571b0", 
+                      name = "Coverage",
+                      na.value = "#f7f7f7") # Treat NAs as the lowest color
+  #scale_fill_viridis_c(option = "D", name = "Coverage")
+
+# 3. View the plot
+print(ph)
+
+
+```
+
+
+
 
 ```{r}
 
@@ -175,11 +233,6 @@ write.tree(tree, "../data/clean/Samples_DonA_and_B.tree")
 plot(tree, main = "UPGMA Tree of Samples", cex = 0.8)
 
 
-
-ggplot(table, aes(Sample, feature, fill=coverage)) +
-  geom_tile() +
-  theme_bw() +
-  theme(axis.text = element_blank())
 
 ```
 

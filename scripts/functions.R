@@ -109,7 +109,8 @@ identColoniz <- function(donor_feature,
 CompFig <- function(feature_c = "../data/clean/binCover.txt", 
                         cutoff_pres = 0,
                         method = "Assembly",
-                        mapfile = "../data/clean/mapfile.txt") {
+                        mapfile = "../data/clean/mapfile.txt",
+                        flabel = BinQT) {
   # DonorA
   donorA_feature <- DonFeature(feature_c = feature_c, donor = "DonA",
                                cutoff_pres = cutoff_pres, method = method)
@@ -143,15 +144,24 @@ CompFig <- function(feature_c = "../data/clean/binCover.txt",
   # join ranks back to original data
   table_ranked <- table %>%
     left_join(feature_order, by = c("Donor", "Group", "feature")) %>%
-    mutate(feature = fct_reorder2(feature, Donor, -feature_rank))
+    left_join(flabel) %>%
+    mutate(feature2 = fct_reorder2(label, Donor, -feature_rank))
+  
+  table_ranked$Group <- factor(table_ranked$Group,
+                      levels = c("DonorA", "ParentA", "AB",
+                                 "ParentAB", "ABAB",
+                                 "BA", "ParentB", "DonorB"))
+  
   
   # Plot
-  compfig <- ggplot(table_ranked, aes(Sample, feature, fill = coverage)) +
+  compfig <- ggplot(table_ranked, aes(Sample, feature2, fill = coverage)) +
     geom_tile() +
     facet_grid(Donor ~ Group, space = "free", scales = "free") +
-    scale_fill_gradient(low = "#eff3ff", high = "#08519c") +
+    scale_fill_gradient(low = "#eff3ff", high = "#0571b0") +
     theme_classic() +
-    theme(axis.text.x = element_blank())
+    theme(axis.text.x = element_blank(),
+          strip.text.x = element_text(angle = 90),
+          axis.title.y = element_blank())
   
   return(compfig)
 }
@@ -201,7 +211,7 @@ CompFigWithTree <- function(feature_c = "../data/clean/binCover.txt",
                  colnames_angle = 90, colnames_position = "bottom") +
     geom_tiplab(size=2, align=TRUE, linesize=.5) + 
     #theme_tree2() +
-    scale_fill_gradient(low = "white", high = "#08519c")
+    scale_fill_gradient(low = "white", high = "#0868ac")
   
   return(pA)
 }

@@ -206,8 +206,6 @@ read.csv("../data/clean/mapfile.txt", sep = "\t") %>%
   group_by(Group) %>%
   mutate(SG= paste(Group, row_number(), sep = "-")) %>%
   ungroup() %>%
-  mutate(SG= gsub("A-1", "A", SG),
-         SG= gsub("B-1", "B", SG)) %>%
   select(Sample, SG) -> mapfile
 
 tree <- read.tree("../data/clean/MAGs_DonA_and_B.tree")
@@ -235,15 +233,21 @@ annotation file for iTOL heatmap
 
 ```{r}
 
+heatmap_order <- c("A", "PA", "B", "PB", "PAB", "AB", "BA", "ABAB")
+
 read.csv("../data/clean/mapfile.txt", sep = "\t") %>%
   mutate(Group = gsub("Parent", "P", Group),
          Group = gsub("Donor", "", Group)) %>%
   group_by(Group) %>%
   mutate(SG= paste(Group, row_number(), sep = "-")) %>%
   ungroup() %>%
-  mutate(SG= gsub("A-1", "A", SG),
-         SG= gsub("B-1", "B", SG)) %>%
-  select(Sample, SG) -> mapfile
+  mutate(Group = factor(Group, levels = heatmap_order)) %>%
+  arrange(Group) -> mapfile
+
+mapfile %>% pull(SG) -> SG_order
+
+mapfile %>%
+  select(Sample, SG) -> mapfile_1
 
 tree <- read.tree("../data/clean/MAGs_DonA_and_B.tree")
 ids <- unique(tree$tip.label)
@@ -251,12 +255,14 @@ ids <- unique(tree$tip.label)
 # Read and filter coverage table
 table <- read.csv("../data/clean/MAGCover.txt", sep = "\t") %>%
   filter(feature %in% ids) %>%
-  left_join(mapfile) %>% select(-Sample)
+  left_join(mapfile_1) %>% select(-Sample)
 
 # Pivot to wide format
 heatmap_data <- table %>%
   spread(SG, coverage, fill = "X") %>%
+  select(feature, any_of(SG_order), everything()) %>%
   arrange(feature)
+
 
 # Extract sample names
 samples <- colnames(heatmap_data)[-1]  # exclude 'feature'
@@ -952,8 +958,13 @@ common_genes %>%
 
 common_genes %>%
   left_join(common_genes_overlap) -> common_genes
-
 common_genes %>%
+  write.table("../data/clean/commonly_colonized_genes_table.csv", 
+            sep = ",", row.names = F, col.names = T, quote = F)
+
+str(common_genes)
+
+str()common_genes %>%
   select(gene_id, Donor, ptype) %>% distinct() %>%
   write.table("../data/clean/commonly_colonized_genes_withRef.txt", 
           sep = "\t", row.names = F, col.names = T, quote = F)
@@ -971,13 +982,52 @@ write.table("../data/clean/commonly_colonized_genes.txt",
 
 ```{r}
 
+
+# --- STEP 1: Create the Nodes Table ---
+# This identifies every unique gene and its donor origin
+nodes <- common_genes %>%
+  distinct(feature, Donor) %>%
+  rename(id = feature, label = feature) 
+
+# --- STEP 2: Create the Edges Table ---
+# We need to link genes that appear in the same 'Group'
+# This uses a self-join to find pairs of genes from different donors in the same group
+edges <- common_genes %>%
+  # Select only necessary columns to keep memory low
+  select(Group, feature, Donor, order) %>%
+  # Join the table to itself on the 'Group' column
+  inner_join(common_genes, by = "Group", relationship = "many-to-many") %>%
+  # Filter so we only connect Donor A to Donor B (avoiding A-A or B-B for clarity)
+  filter(Donor.x == "DonA" & Donor.y == "DonB") %>%
+  # Rename for Gephi standard (Source and Target)
+  rename(source = feature.x, target = feature.y, arrival_order = order.x) %>%
+  # Keep unique pairs to avoid massive file sizes
+  distinct(source, target, arrival_order)
+
+# --- STEP 3: Export Files ---
+write_csv(nodes, "gephi_nodes.csv")
+write_csv(edges, "gephi_edges.csv")
+
+message("Files 'gephi_nodes.csv' and 'gephi_edges.csv' are ready for Gephi!")
+
+```
+
+
+
+
+```{r}
+
 common_genes %>%
   select(Donor, gene_id, order) %>%
   group_by(Donor, order) %>% summarise(n = n()) %>%
   ggplot(aes(order, n, color = Donor)) +
-  geom_point() + geom_line(aes(group = Donor)) +
+  geom_point() + geom_line(aes(group = Donor), size =1) +
+  scale_color_manual(values = c("DonA" = "#7b3294",
+                                 "DonB" = "#008837")) +
   theme_bw() +
   ylab("commonly colonized genes")
+ggsave("../figs/Gene_CE_order.png", height = 8, width = 12, units = "cm")
+
   
 ```
 
@@ -987,13 +1037,42 @@ common_genes %>%
 ggplot(common_genes, aes(gene_id, Group, fill=Donor)) +
   geom_tile() +
   facet_grid(~ptype, scales = "free", space = "free") +
+   scale_fill_manual(values = c("DonA" = "#7b3294",
+                                 "DonB" = "#008837")) +
   theme_classic() +
   theme(axis.text.x = element_blank(),
+        legend.position = "bottom",
         strip.text.x = element_text(angle = 90))
+ggsave("../figs/Gene_CE_unique.png", height = 8, width = 16, units = "cm")
 
 ```
 
+
+```{r}
+#common genes in each donor:
+read.table("../data/clean/commonly_colonized_genes_withRef.txt", 
+                        sep = "\t", header  = T) %>%
+  rename(qseqid = "gene_id") -> geneMap
+
+geneMap %>%
+  group_by(Donor, ptype) %>%
+  tally(name = "count") %>%
+ggplot(aes(ptype, count, fill = Donor)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = c("DonA" = "#7b3294",
+                                 "DonB" = "#008837")) +
+    theme_bw()
+ggsave("../figs/Gene_CE_unqiue2.png", height = 8, width = 16, units = "cm")
+
+
+
+```
+
+
+
+
 ## common colonized genes against RefSeq
+
 
 ```{r}
 
@@ -1030,30 +1109,109 @@ blastn_parser("../Results/Assembly/commonly_colonized_genes.fasta.fai",
   left_join(refseq_taxonomy) %>%
   ungroup() %>%
   group_by(Species) %>%
-  #mutate(spID= paste(Species, row_number(), sep = "_")) %>%
   mutate(spID= paste(Species, gsub("_ASM.*", "", user_genome),
                      sep = "_")) -> refseq_inGenes
 # genomes with >= 5 genes:
 refseq_inGenes %>%
   filter(genes >= 15) %>%
   filter(ptype %in% c("AB", "BA")) %>%
+  # remove few long names from fig
+  mutate(spID = gsub("_Aond_1.0_genomic", "", spID)) %>%
+  mutate(spID = gsub("_htyphlonius_mit97-6810_genomic", "", spID)) %>%
+  mutate(spID = gsub("_UHGG_MGYG-HGUT-02478_genomic", "", spID)) %>%
 ggplot(aes(genes, reorder_within(spID, genes, Donor), fill=Donor)) +
   geom_bar(stat = "identity") +
-  facet_grid(~ptype, space = "free", scales = "free") +
+  facet_grid(Family~ptype, space = "free", scales = "free") +
   #scale_x_log10() +
   scale_fill_manual(values = c("DonA" = "#7b3294",
                                  "DonB" = "#008837")) +
   scale_y_reordered() +
   theme_bw() +
   theme(strip.text.y = element_text(angle = 0),
-        legend.position = "bottom",
+        legend.position = "none",
         axis.title.y = element_blank())
+ggsave("../figs/Gene_CE_inRefSeq.png", height = 20, width = 16, units = "cm")
+
+test$spID
 
 ```
 
 
+```{r}
 
 
+
+read.csv("../Results/Assembly/commonly_colonized_genes.emapper.annotations", 
+         sep = "\t") %>%
+  select(X.query, COG_category) %>%
+  filter(!COG_category == "-") %>%
+  rename(qseqid = "X.query") -> eggnog
+
+
+cog_def <- data.frame(  COG_category = c("S","M","L","G","J","K",      
+                                         "E","C","P","H","O","U",
+                                         "T","D","V"),  
+                        Def = c(    "Function unknown",
+                                    "Cell wall/membrane/envelope biogenesis",
+                                    "Replication, recombination and repair",
+                                    "Carbohydrate transport and metabolism",
+                                    "Translation, ribosomal structure and biogenesis",
+                                    "Transcription",
+                                    "Amino acid transport and metabolism",
+                                    "Energy production and conversion",
+                                    "Inorganic ion transport and metabolism",
+                                    "Coenzyme transport and metabolism",
+                                    "Posttranslational modification, protein turnover, chaperones",
+                                    "Intracellular trafficking, secretion, and vesicular transport",
+                                    "Signal transduction mechanisms", 
+                                    "Cell cycle control, cell division, chromosome partitioning", 
+                                    "Defense mechanisms"  ))
+ 
+geneMap %>%
+  left_join(eggnog) %>%
+  filter(!is.na(COG_category)) %>%
+  filter(ptype %in% c("AB", "BA")) %>%
+  select(Donor, ptype, COG_category) %>%
+  mutate(COG_category = str_replace_all(str_trim(COG_category), "\\s+", "")) %>% 
+  # Split between every character boundary  
+  separate_rows(COG_category, sep = "(?<=.)(?=.)") %>%
+  group_by(Donor, ptype, COG_category) %>%
+  tally(name = "count") %>%        
+  group_by(Donor, ptype) %>%
+  slice_max(order_by = count, n = 10, with_ties = FALSE) -> tab1
+
+tab1_joined <- tab1 %>%
+  left_join(cog_def, by = "COG_category")
+
+# Reorder facet labels (Def) by summed counts
+def_ordered <- tab1_joined %>%
+  group_by(Def) %>%
+  summarise(total = sum(count), .groups = "drop") %>%
+  arrange(total) %>%
+  pull(Def)
+
+tab1_joined %>%
+  mutate(Def = factor(Def, levels = def_ordered)) %>%
+  ggplot(aes(x = count, y = ptype, fill = Donor)) +
+  geom_bar(stat = "identity") +
+  facet_grid(rows = vars(Def), space = "free", scales = "free") +
+  scale_fill_manual(values = c("DonA" = "#7b3294", "DonB" = "#008837")) +
+  theme_classic() +
+  theme(strip.text.y = element_text(angle = 0, hjust = 0),
+        legend.position = "none",
+        axis.title = element_blank())
+ggsave("../figs/Gene_CE_eggnog.png", height = 10, width = 16, units = "cm")
+
+```
+
+
+```{r}
+
+read.csv("../Results/Assembly/commonly_colonized_genes.emapper.annotations", 
+         sep = "\t") %>%
+  filter(str_detect(COG_category, "P")) -> test
+
+```
 
 
 
