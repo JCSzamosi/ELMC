@@ -43,7 +43,7 @@ mag_cov = filter(mag_cov, Sample %in% dat_map$Sample)
 ### Species Taxonomy
 
 ```{r}
-spc_dat = read.delim('data/clean/speciesAbund.txt')
+spc_dat = read.delim('../../data/clean/speciesAbund.txt')
 spc_dat = (spc_dat
            %>% mutate(feature = gsub('[a-z]__','',feature))
            %>% separate_wider_delim(feature, '|', 
