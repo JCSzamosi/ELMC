@@ -10,7 +10,7 @@ library(tidyverse)
 library(glmmTMB)
 library(emmeans)
 library(AfterSl1p)
-source('scripts/stats/functions.R')
+source('functions.R')
 theme_set(theme_bw())
 ```
 
@@ -20,7 +20,7 @@ theme_set(theme_bw())
 
 ```{r}
 # sample data
-dat = read.delim('data/clean/coloniz_model.txt')
+dat = read.delim('../../data/clean/coloniz_model.txt')
 dat_map = (dat
            %>% select(Sample, Group, Category, Cage)
            %>% unique())
@@ -30,13 +30,13 @@ rm(dat)
 ### Bins/MAGs
 
 ```{r}
-bin_tax = read.delim('data/clean/binQT.txt')
+bin_tax = read.delim('../../data/clean/binQT.txt')
 
-bin_cov = read.delim('data/clean/binCover.txt')
+bin_cov = read.delim('../../data/clean/binCover.txt')
 bin_cov = filter(bin_cov, Sample %in% dat_map$Sample)
-all_mags = read.delim('data/clean/MAGids.txt', header = FALSE)
+all_mags = read.delim('../../data/clean/MAGids.txt', header = FALSE)
 colnames(all_mags) = 'BinLab'
-mag_cov = read.delim('data/clean/MAGCover.txt')
+mag_cov = read.delim('../../data/clean/MAGCover.txt')
 mag_cov = filter(mag_cov, Sample %in% dat_map$Sample)
 ```
 
