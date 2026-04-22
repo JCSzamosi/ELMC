@@ -1,3 +1,69 @@
+get_contr_pv = function(mod_lst){
+  # Get contrasts and p-values from models produced by loop_mods()
+  contr_df = data.frame(contrast = NA,
+                        estimate = NA,
+                        SE = NA, 
+                        df = NA, 
+                        t.ratio = NA,
+                        p.value = NA,
+                        within_don = NA,
+                        feature = NA)
+  
+  for (feat in names(mod_lst)){
+    mod = mod_lst[[feat]]
+    emA = emmeans(mod, specs = trt.vs.ctrl1 ~ order, at = list(Donor = 'DonorA'))
+    emB = emmeans(mod, specs = trt.vs.ctrl1 ~ order, at = list(Donor = 'DonorB'))
+    df = rbind(cbind(emA$contrasts, 
+                     data.frame(within_don = 'DonorA', feature = feat)),
+               cbind(emB$contrasts, 
+                     data.frame(within_don = 'DonorB', feature = feat)))
+    df = df[,colnames(contr_df)]
+    contr_df = rbind(contr_df, df)
+  }
+  contr_df = contr_df[-1,]
+  contr_df = separate_wider_delim(contr_df, contrast, ' - ', names = c('numerator',
+                                                                       'denominator'))
+  return(contr_df)
+}
+
+use_loop_mods = function(dat, ft, tl){
+  df = filter(dat, FeatureType == ft, TaxLev == tl)
+  outlst = loop_mods(df)
+  outlst[['prdf']]$FeatureType = ft
+  outlst[['prdf']]$TaxLev = tl
+  return(outlst)
+}
+
+loop_mods = function(dat){
+  # Loop over all features/taxa to run the models and collect outputs
+  pr_df = data.frame(resid = NA,
+                     fitted = NA, 
+                     feature = NA)
+  mod_lst = list()
+  for (feat in unique(dat$feature)){
+    mod = run_mod(filter(dat, feature == feat))
+    pr_df = rbind(pr_df,
+                  data.frame(resid = resid(mod),
+                             fitted = fitted(mod),
+                             feature = feat))
+    mod_lst[[feat]] = mod
+  }
+  pr_df = pr_df[-1,]
+  return(list(mods = mod_lst, prdf = pr_df))
+}
+
+
+run_mod = function(dat, re = TRUE){
+  # Run the model that we use everywhere
+  form = 'count/size ~ order * Donor'
+  if (re){
+    form = paste(form, '+ (1 | Cage) + (1 | Sample)')
+  }
+  mod = glmmTMB(formula(form),
+                family = 'gaussian',
+                data = dat)
+}
+
 sum_bins = function(df){
   breaks = n_distinct(df$bins)
   labs = paste('bin', 1:breaks, sep = '')
@@ -76,4 +142,34 @@ mk_plt_row = function(df, grp){
                  labels = grp,
                  label_size = 10)
   return(rw)
+}
+
+find_don_shared = function(df, col){
+  shared = (df
+            %>% rename(feature = {{ col }})
+            %>% select(Donor, feature)
+            %>% na.omit()
+            %>% unique()
+            %>% count(feature)
+            %>% filter(n > 1)
+            %>% pull(feature))
+  return(shared)
+}
+
+get_counts = function(df, both_vect, taxlev, ftype, size_df){
+
+  ft_count = (df
+              %>% rename(feature = {{ taxlev }})
+              %>% filter(feature %in% both_vect)
+              %>% count(Sample, Donor, feature, name = 'count')
+              %>% pivot_wider(names_from = 'feature', values_from = 'count',
+                              values_fill = 0)
+              %>% pivot_longer(-(Sample:Donor),
+                               names_to = 'feature', values_to = 'count')
+              %>% left_join((size_df
+                             %>% rename(feature = {{ taxlev }})),
+                             by = c('feature', 'Donor'))
+              %>% mutate(FeatureType = ftype,
+                         TaxLev = taxlev))
+  return(ft_count)
 }

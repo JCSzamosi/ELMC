@@ -1,0 +1,104 @@
+Feature-wise Models
+===================
+
+## Setup 
+
+### Load packages
+
+```{r}
+library(tidyverse)
+library(glmmTMB)
+library(emmeans)
+source('scripts/stats/functions.R')
+theme_set(theme_bw())
+```
+
+### Read in data
+
+```{r}
+dat = read.delim('data/clean/coloniz_model.txt')
+head(dat)
+summary(dat)
+
+dat = (dat
+       %>% mutate(Group = factor(Group, levels = c('AB', 'BA', 'ABAB')),
+                  Donor = factor(Donor),
+                  order = factor(order, levels = c('mixed', 'second', 'first')),
+                  feature = factor(feature),
+                  count = raw_count,
+                  size = feature_size))
+summary(dat)
+```
+
+Look at the data distribution
+
+```{r}
+ggplot(dat, aes(count)) +
+  geom_histogram() +
+  facet_wrap(~feature, scales = 'free')
+```
+
+
+## Run Models
+
+```{r}
+mods_out = loop_mods(dat, feats = unique(dat$feature))
+pr_df = mods_out[['prdf']]
+mod_lst = mods_out[['mods']]
+```
+
+### Model Diagnostics
+
+```{r}
+fr_plt = ggplot(pr_df, aes(fitted, resid)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = 'lm') +
+  geom_hline(yintercept = 0, linetype = 2) +
+  facet_wrap(~feature, scales = 'free')
+fr_plt
+
+abs_fr_plt = ggplot(pr_df, aes(fitted, abs(resid))) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = 'lm') +
+  facet_wrap(~feature, scales = 'free')
+abs_fr_plt
+
+qq_plt = ggplot(pr_df, aes(sample = resid)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_wrap(~feature, scales = 'free')
+qq_plt
+```
+
+
+These are not great (gene is the messiest) but they are not terrible. We can use
+these models.
+
+### Extract p-values & coefficients
+
+```{r}
+contr_df = get_contr_pv(mod_lst)
+head(contr_df)
+write.csv(contr_df, file = 'Results/Stats/feature_model_results.csv')
+```
+
+### Estimates plot
+
+```{r}
+est_plt_feat = ggplot(contr_df, aes(numerator, estimate, colour = within_don)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  geom_linerange(aes(ymin = estimate - 1.96*SE,
+                     ymax = estimate + 1.96*SE),
+                 position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  coord_flip() +
+  facet_wrap(~feature) +
+  scale_color_manual(values = c("DonorA" = "#7b3294",
+                                  "DonorB" = "#008837"),
+                     name = 'Donor') +
+  labs(y = 'Difference from mixed',
+       x = 'Order')
+est_plt_feat
+
+ggsave('Results/Stats/est_plot_features.png', plot = est_plt_feat)
+```
