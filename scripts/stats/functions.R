@@ -4,7 +4,6 @@ get_contr_pv = function(mod_lst){
                         estimate = NA,
                         SE = NA, 
                         df = NA, 
-                        t.ratio = NA,
                         p.value = NA,
                         within_don = NA,
                         feature = NA)
@@ -13,9 +12,9 @@ get_contr_pv = function(mod_lst){
     mod = mod_lst[[feat]]
     emA = emmeans(mod, specs = trt.vs.ctrl1 ~ order, at = list(Donor = 'DonorA'))
     emB = emmeans(mod, specs = trt.vs.ctrl1 ~ order, at = list(Donor = 'DonorB'))
-    df = rbind(cbind(emA$contrasts, 
+    df = rbind(cbind(data.frame(emA$contrasts)[,-5], 
                      data.frame(within_don = 'DonorA', feature = feat)),
-               cbind(emB$contrasts, 
+               cbind(data.frame(emB$contrasts)[,-5], 
                      data.frame(within_don = 'DonorB', feature = feat)))
     df = df[,colnames(contr_df)]
     contr_df = rbind(contr_df, df)
